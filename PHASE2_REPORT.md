@@ -15,160 +15,204 @@ Run a versioned vLLM compatibility torture pass against the Bielik tool parser s
 - no upstream PR
 - no contact with SpeakLeash
 
-## Changes made in Phase 2
+## Phase 2 execution
 
-1. Added `scripts/vllm_compat_probe.py`.
-2. Added `.github/workflows/vllm-compat-matrix.yml`.
-3. Updated `COMPATIBILITY_MATRIX.md` with source/contract results.
+Added:
 
-## Evidence levels
+- `scripts/vllm_compat_probe.py`
+- `.github/workflows/vllm-compat-matrix.yml`
 
-### MECHANICALLY VERIFIED
+The probe downloads the exact published vLLM wheel from PyPI using `pip download --no-deps --only-binary=:all:`, inspects the Python API shipped inside that wheel, compares it to the Bielik parser selected for the same version, and uploads JSON evidence.
 
-Phase 1 parser harness remains:
+GitHub Actions run:
+
+- run id: `37509330061`
+- head SHA: `8474794af0ac3e0933f32ce8a8bf2c47ebc10b76`
+- workflow conclusion: `success`
+- six matrix jobs completed
+- six JSON evidence artifacts uploaded
+
+Important: workflow `success` means the evidence collection completed. Compatibility is determined by each JSON artifact's `verdict`, not by the job conclusion.
+
+## Published-wheel matrix result
+
+| vLLM | Wheel probe verdict | Risks |
+|---|---|---|
+| 0.18.0 | `COMPATIBLE_API_SHAPE` | none |
+| 0.19.0 | `RISK_DETECTED` | `CONSTRUCTOR_TOOLS_MISMATCH` |
+| 0.20.0 | `RISK_DETECTED` | `CONSTRUCTOR_TOOLS_MISMATCH`, `REQUIRED_NAMED_ROUTING_FLAG_MISSING` |
+| 0.23.0 | `RISK_DETECTED` | `CONSTRUCTOR_TOOLS_MISMATCH`, `REQUIRED_NAMED_ROUTING_FLAG_MISSING` |
+| 0.24.0 | `COMPATIBLE_API_SHAPE` | none |
+| 0.31.0 | `RISK_DETECTED` | `PARSER_IMPORT_PATH_MISSING` |
+
+## Artifact proof
+
+| vLLM | Artifact ID | SHA-256 digest |
+|---|---:|---|
+| 0.18.0 | `11432853522` | `14103bef747336daa28f11165de4bb9d79448770aecf9d9c5c4f0e9cd94f8c0f` |
+| 0.19.0 | `11431959705` | `feac59b75f17c106c4b08bd5da3b25e5813c2d31afdc9eb45a8b2154be92878e` |
+| 0.20.0 | `11434705106` | `b66e2651521a2bd302d95aba57c0db94bd3306810b608a7077a753abf9964a06` |
+| 0.23.0 | `11433595281` | `d2a8fd66822cd42c55482bda4d28598bc8012c70918786441f0a795751f1bdcb` |
+| 0.24.0 | `11435130025` | `0fe4ad2e64fca24d9d5fe982f592b4aa62b8643f8fbbe8900e1e6d8cd50b1a6d` |
+| 0.31.0 | `11434945080` | `441ae66d774530e2c886a8dcfea0216da50be8ab4376d5af202e1324e0fc37f2` |
+
+## Finding P2-F1 — vLLM 0.19 is the constructor break
+
+Published-wheel inspection:
+
+vLLM 0.18 ToolParser:
 
 ```text
-20 passed, 1 xfailed
+params = [self, tokenizer]
 ```
 
-The XFAIL is the known streaming-close edge.
+Bielik parser selected for 0.18:
 
-### SOURCE/CONTRACT VERIFIED
-
-Official tagged vLLM source was inspected for:
-
-- base `ToolParser` constructor shape,
-- actual tool-parser construction call sites,
-- `supports_required_and_named` routing,
-- import module availability,
-- current protocol model location.
-
-## Matrix result
-
-| vLLM | Result | Evidence |
-|---|---|---|
-| 0.18.0 | GREEN | serving constructs parser with tokenizer only; legacy Bielik parser matches |
-| 0.19.0 | RED | serving constructs parser with `tokenizer, request.tools`; Bielik legacy parser accepts tokenizer only |
-| 0.20.0 | RED | two-argument parser construction plus required/named routing contract; legacy Bielik parser is behind both contracts |
-| 0.23.0 | RED | two-argument parser construction; legacy Bielik parser constructor mismatch persists |
-| 0.24.0 | GREEN | modern Bielik parser accepts tools and sets `supports_required_and_named=False` |
-| 0.31.0 | RED | current Bielik parser imports removed module `vllm.entrypoints.openai.engine.protocol` |
-
-## Finding P2-F1 — issue #12 begins at vLLM 0.19
-
-vLLM 0.18 chat serving:
-
-```python
-self.tool_parser(tokenizer)
+```text
+params = [self, tokenizer]
 ```
 
-vLLM 0.19 chat serving:
+Result: compatible API shape.
+
+vLLM 0.19 ToolParser:
+
+```text
+params = [self, tokenizer, tools]
+```
+
+Bielik parser selected for 0.19:
+
+```text
+params = [self, tokenizer]
+```
+
+Result:
+
+```text
+CONSTRUCTOR_TOOLS_MISMATCH
+```
+
+Tagged-source inspection independently confirms vLLM 0.19 OpenAI serving constructs the parser as:
 
 ```python
 self.tool_parser(tokenizer, request.tools)
 ```
 
-Bielik legacy parser:
+**Evidence level: PUBLISHED_WHEEL_VERIFIED + SOURCE/CONTRACT_VERIFIED.**
 
-```python
-def __init__(self, tokenizer: TokenizerLike):
+## Finding P2-F2 — 0.20–0.23 need more than a constructor patch
+
+Wheel evidence for both 0.20 and 0.23:
+
+```text
+base_accepts_tools = true
+bielik_accepts_tools = false
+base_has_supports_required_and_named = true
+bielik_has_supports_required_and_named = false
 ```
 
-Result: a direct constructor contract conflict starts at `0.19.0`.
+Risks:
 
-**Status:** CONFIRMED BY TAGGED SOURCE.
-
-## Finding P2-F2 — constructor-only repair is incomplete for 0.20–0.23
-
-The newer vLLM parser stack uses `supports_required_and_named` to decide whether required/named choices go through standard JSON parsing or fall back to a model-specific tool parser.
-
-The modern Bielik parser explicitly sets:
-
-```python
-supports_required_and_named = False
+```text
+CONSTRUCTOR_TOOLS_MISMATCH
+REQUIRED_NAMED_ROUTING_FLAG_MISSING
 ```
 
-The legacy parser selected by README for 0.20–0.23 does not.
+Tagged vLLM parser source also shows the fallback path for model-specific parsers when `supports_required_and_named=False`.
 
-Result: 0.20–0.23 need both constructor compatibility and routing-contract verification.
+**Evidence level: PUBLISHED_WHEEL_VERIFIED + SOURCE/CONTRACT_VERIFIED.**
 
-**Status:** CONFIRMED BY TAGGED SOURCE.
+## Finding P2-F3 — 0.24 is aligned at API shape
 
-## Finding P2-F3 — vLLM 0.31 breaks the current import path
+Wheel evidence:
 
-Bielik current parser imports:
-
-```python
-vllm.entrypoints.openai.engine.protocol
+```text
+base_accepts_tools = true
+bielik_accepts_tools = true
+base_has_supports_required_and_named = true
+bielik_has_supports_required_and_named = true
+missing_vllm_import_modules = []
+risks = []
+verdict = COMPATIBLE_API_SHAPE
 ```
 
-Official vLLM 0.31.0 no longer contains that module.
+This does not yet prove model inference, but the parser API/import contract matches the published 0.24 wheel.
 
-The required classes now exist in:
+**Evidence level: PUBLISHED_WHEEL_VERIFIED.**
+
+## Finding P2-F4 — current parser breaks again on vLLM 0.31.0
+
+Wheel evidence:
+
+```text
+missing_vllm_import_modules = [
+  "vllm.entrypoints.openai.engine.protocol"
+]
+risks = [
+  "PARSER_IMPORT_PATH_MISSING"
+]
+verdict = RISK_DETECTED
+```
+
+Official vLLM 0.31.0 source contains the required protocol classes under:
 
 ```python
 vllm.entrypoints.generate.base.protocol
 ```
 
-and vLLM 0.31's built-in Hermes parser imports the protocol models from that new path.
+and the built-in vLLM 0.31 Hermes parser imports:
 
-Result: the Bielik README range `>=0.24.0` is not valid without another compatibility split or adaptive import strategy.
+- `DeltaFunctionCall`
+- `DeltaMessage`
+- `DeltaToolCall`
+- `ExtractedToolCallInformation`
+- `FunctionCall`
+- `ToolCall`
 
-**Status:** CONFIRMED BY TAGGED SOURCE.
+from that new location.
 
-## GitHub Actions matrix
+**Evidence level: PUBLISHED_WHEEL_VERIFIED + SOURCE/CONTRACT_VERIFIED.**
 
-A workflow was committed to execute a published-wheel probe across all six versions.
+## Phase 1 parser harness
 
-### Expected workflow
+Still valid:
 
-Each job:
+```text
+20 passed, 1 xfailed
+```
 
-1. checks out this branch,
-2. downloads the exact vLLM wheel from PyPI with `--no-deps`,
-3. inspects the API shipped in the wheel,
-4. compares it with the selected Bielik parser,
-5. uploads JSON evidence.
+The XFAIL is the isolated streaming-close edge. It remains intentionally unresolved in Phase 2 because parser fixes were out of scope.
 
-### Actual workflow status
+## What Phase 2 proves
 
-`BLOCKED`.
-
-No Actions run was created after the workflow commit.
-
-The connected GitHub tooling can read workflow runs but cannot read/change the repository Actions enablement setting or dispatch a workflow manually. Therefore the wheel-level run is not claimed as executed.
-
-## What is proven now
-
-- The 0.19 constructor break is not hypothetical.
-- 0.20–0.23 have an additional routing-contract concern.
-- 0.24 is aligned at source-contract level.
-- 0.31 has a new hard import-path break.
-- The existing README compatibility table is stale/incomplete.
-- No upstream code was changed.
+- The documented `0.15–0.23` parser range breaks at the API boundary beginning in 0.19.
+- 0.20–0.23 additionally require required/named routing alignment.
+- 0.24 matches the modern parser API shape.
+- The open-ended README range `>=0.24` is stale because 0.31 removes an import path used by the current parser.
+- These findings are reproduced against actual published vLLM wheels, not only inferred from GitHub source.
+- Upstream SpeakLeash remains untouched.
 
 ## What remains UNKNOWN
 
-- real package import results from the GitHub Actions wheel matrix,
-- live vLLM server behavior,
-- Bielik model inference behavior,
+- full `import bielik_vllm_tool_parser` with every vLLM dependency installed,
+- live `vllm serve`,
+- Bielik model inference,
 - tokenizer chunk behavior for the streaming XFAIL,
-- GPU/runtime behavior.
+- GPU runtime behavior.
 
 ## Recommended Phase 3 patch boundary
 
-Do not build a broad refactor.
+Minimal, test-driven patch only:
 
-Minimal patch candidates:
-
-1. split legacy parser compatibility at `0.19` or make its constructor safely accept `tools`,
-2. align required/named routing for 0.20–0.23,
-3. introduce version-safe protocol imports for 0.31+,
-4. verify all six matrix points,
-5. only then prepare an upstream PR.
+1. make 0.19–0.23 parser construction compatible with `tools`,
+2. align `supports_required_and_named=False` where the vLLM routing contract requires it,
+3. make protocol imports compatible with the 0.31 path transition,
+4. extend the wheel probe to enforce expected verdicts,
+5. run matrix again,
+6. then run a real `vllm serve` smoke test before any upstream PR.
 
 ## Verdict
 
-**PHASE 2 = SOURCE/CONTRACT VERIFIED, CI BLOCKED.**
+**PHASE 2 = PUBLISHED_WHEEL_VERIFIED.**
 
-The compatibility problem is now bounded to concrete vLLM API transitions rather than a vague parser bug.
+The Bielik tool-parser compatibility surface is now bounded by three concrete transitions: vLLM 0.19 constructor change, vLLM 0.20 required/named routing contract, and vLLM 0.31 protocol-module relocation.
