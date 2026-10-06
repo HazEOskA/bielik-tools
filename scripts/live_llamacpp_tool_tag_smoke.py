@@ -53,6 +53,12 @@ TOOLS = [
 ]
 
 
+def get(path: str, timeout: int = 60) -> dict:
+    req = urllib.request.Request(BASE_URL + path, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def post(path: str, payload: dict, timeout: int = 300) -> dict:
     req = urllib.request.Request(
         BASE_URL + path,
@@ -64,11 +70,11 @@ def post(path: str, payload: dict, timeout: int = 300) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def chat(messages: list[dict], tools: list[dict], tool_choice: str = "required") -> dict:
+def chat(model: str, messages: list[dict], tools: list[dict], tool_choice: str = "required") -> dict:
     return post(
         "/v1/chat/completions",
         {
-            "model": "Bielik",
+            "model": model,
             "messages": messages,
             "tools": tools,
             "tool_choice": tool_choice,
@@ -117,6 +123,10 @@ def main() -> int:
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
     try:
+        models = get("/v1/models")
+        model = models["data"][0]["id"]
+        evidence["served_model_id"] = model
+
         weather_messages = [
             {
                 "role": "user",
@@ -124,6 +134,7 @@ def main() -> int:
             }
         ]
         weather = chat(
+            model,
             weather_messages,
             only_tool("get_current_weather"),
             "required",
@@ -139,6 +150,7 @@ def main() -> int:
         }
 
         forecast = chat(
+            model,
             [
                 {
                     "role": "user",
@@ -173,6 +185,7 @@ def main() -> int:
             }
         )
         final = chat(
+            model,
             followup_messages,
             only_tool("get_current_weather"),
             "auto",
