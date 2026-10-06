@@ -54,11 +54,13 @@ jobs:
 
       - name: Publish step summary
         run: |
-          echo "## vLLM ${{ matrix.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "\\`\\`\\`json" >> "$GITHUB_STEP_SUMMARY"
-          cat "evidence/vllm-${{ matrix.version }}.json" >> "$GITHUB_STEP_SUMMARY"
-          echo "\\`\\`\\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## vLLM ${{ matrix.version }}"
+            echo
+            echo '```json'
+            cat "evidence/vllm-${{ matrix.version }}.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload compatibility evidence
         uses: actions/upload-artifact@v4
