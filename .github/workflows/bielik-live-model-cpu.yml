@@ -47,8 +47,11 @@ jobs:
           docker run -d \
             --name bielik-llama \
             -p 8080:8080 \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             ghcr.io/ggml-org/llama.cpp:server \
             --hf-repo "speakleash/Bielik-1.5B-v3.0-Instruct-GGUF:Q8_0" \
+            --jinja \
+            --chat-template-file /workspace/tools/bielik_advanced_chat_template.jinja \
             --ctx-size 1024 \
             --threads 4 \
             --host 0.0.0.0 \
