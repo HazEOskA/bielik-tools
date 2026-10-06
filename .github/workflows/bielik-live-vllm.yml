@@ -1,0 +1,106 @@
+name: Bielik Phase 4 Live Runtime
+
+on:
+  push:
+    branches:
+      - feat/osa-tool-parser-proof-suite
+    paths:
+      - "scripts/live_vllm_torture.py"
+      - ".github/workflows/bielik-live-vllm.yml"
+      - "tools/bielik_vllm_tool_parser.py"
+      - "tools/bielik_advanced_chat_template.jinja"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-vllm-cpu:
+    name: vLLM 0.31 CPU / Bielik 1.5B Q8_0
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Host capability evidence
+        run: |
+          mkdir -p evidence
+          {
+            echo "uname:"
+            uname -a
+            echo
+            echo "lscpu:"
+            lscpu
+            echo
+            echo "memory:"
+            free -h
+            echo
+            echo "disk:"
+            df -h
+          } | tee evidence/phase4-host.txt
+
+      - name: Pull vLLM CPU image
+        run: docker pull vllm/vllm-openai-cpu:v0.31.0-x86_64
+
+      - name: Start real Bielik vLLM server
+        run: |
+          docker run -d --rm \
+            --name bielik-vllm \
+            --shm-size=2g \
+            -p 8000:8000 \
+            -e VLLM_CPU_KVCACHE_SPACE=1 \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            --entrypoint bash \
+            vllm/vllm-openai-cpu:v0.31.0-x86_64 \
+            -lc 'python -m pip install --disable-pip-version-check -q vllm-gguf-plugin && exec vllm serve "speakleash/Bielik-1.5B-v3.0-Instruct-GGUF:Q8_0" \
+              --dtype=float32 \
+              --max-model-len=1024 \
+              --enable-auto-tool-choice \
+              --tool-parser-plugin /workspace/tools/bielik_vllm_tool_parser.py \
+              --tool-call-parser bielik \
+              --chat-template /workspace/tools/bielik_advanced_chat_template.jinja \
+              --host 0.0.0.0 \
+              --port 8000' \
+            | tee evidence/phase4-container-id.txt
+
+      - name: Wait for vLLM readiness
+        run: |
+          set +e
+          ready=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! docker inspect bielik-vllm >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+          docker logs bielik-vllm > evidence/phase4-vllm.log 2>&1 || true
+          if [ "$ready" -ne 1 ]; then
+            echo "vLLM server did not become ready"
+            tail -n 200 evidence/phase4-vllm.log || true
+            exit 1
+          fi
+
+      - name: Run live tool-calling torture test
+        run: python scripts/live_vllm_torture.py
+
+      - name: Capture final server logs
+        if: always()
+        run: docker logs bielik-vllm > evidence/phase4-vllm.log 2>&1 || true
+
+      - name: Upload Phase 4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bielik-phase4-live-vllm-evidence
+          path: evidence/
+          if-no-files-found: warn
+
+      - name: Stop server
+        if: always()
+        run: docker stop bielik-vllm >/dev/null 2>&1 || true
