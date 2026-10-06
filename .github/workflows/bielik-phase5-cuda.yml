@@ -1,0 +1,48 @@
+name: Bielik Phase 5 CUDA Runtime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase5-cuda:
+    name: vLLM 0.31 CUDA / real Bielik / parser proof
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Host and GPU evidence
+        run: |
+          mkdir -p evidence
+          {
+            echo "uname:"
+            uname -a
+            echo
+            echo "python:"
+            python --version
+            echo
+            echo "docker:"
+            docker --version
+            echo
+            echo "nvidia-smi:"
+            nvidia-smi
+          } | tee evidence/phase5-host-gpu.txt
+
+      - name: Run Phase 5 CUDA proof
+        env:
+          BIELIK_MODEL: speakleash/Bielik-1.5B-v3.0-Instruct
+          VLLM_IMAGE: vllm/vllm-openai:v0.31.0
+        run: bash scripts/run_phase5_cuda.sh
+
+      - name: Upload Phase 5 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bielik-phase5-cuda-evidence
+          path: evidence/
+          if-no-files-found: error
