@@ -55,6 +55,8 @@ jobs:
             --entrypoint bash \
             vllm/vllm-openai-cpu:v0.31.0-x86_64 \
             -lc 'python -m pip install --disable-pip-version-check -q vllm-gguf-plugin && exec vllm serve "speakleash/Bielik-1.5B-v3.0-Instruct-GGUF:Q8_0" \
+              --hf-config-path "speakleash/Bielik-1.5B-v3.0-Instruct-FP8-Dynamic" \
+              --tokenizer "speakleash/Bielik-1.5B-v3.0-Instruct-FP8-Dynamic" \
               --dtype=float32 \
               --max-model-len=1024 \
               --enable-auto-tool-choice \
@@ -75,6 +77,9 @@ jobs:
               break
             fi
             if ! docker inspect bielik-vllm >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' bielik-vllm 2>/dev/null)" != "true" ]; then
               break
             fi
             sleep 5
