@@ -1,0 +1,68 @@
+name: Bielik vLLM Compatibility Matrix
+
+on:
+  push:
+    branches:
+      - feat/osa-tool-parser-proof-suite
+    paths:
+      - "scripts/vllm_compat_probe.py"
+      - ".github/workflows/vllm-compat-matrix.yml"
+      - "tools/bielik_vllm_tool_parser*.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: vLLM ${{ matrix.version }} / ${{ matrix.parser }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "0.18.0"
+            parser: "tools/bielik_vllm_tool_parser_v0.15.0.py"
+          - version: "0.19.0"
+            parser: "tools/bielik_vllm_tool_parser_v0.15.0.py"
+          - version: "0.20.0"
+            parser: "tools/bielik_vllm_tool_parser_v0.15.0.py"
+          - version: "0.23.0"
+            parser: "tools/bielik_vllm_tool_parser_v0.15.0.py"
+          - version: "0.24.0"
+            parser: "tools/bielik_vllm_tool_parser.py"
+          - version: "0.31.0"
+            parser: "tools/bielik_vllm_tool_parser.py"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Probe published vLLM wheel
+        run: |
+          mkdir -p evidence
+          safe_version="${{ matrix.version }}"
+          python scripts/vllm_compat_probe.py \
+            --version "${{ matrix.version }}" \
+            --parser "${{ matrix.parser }}" \
+            --output "evidence/vllm-${safe_version}.json"
+
+      - name: Publish step summary
+        run: |
+          echo "## vLLM ${{ matrix.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\\`\\`\\`json" >> "$GITHUB_STEP_SUMMARY"
+          cat "evidence/vllm-${{ matrix.version }}.json" >> "$GITHUB_STEP_SUMMARY"
+          echo "\\`\\`\\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compatibility evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: vllm-${{ matrix.version }}-compat-evidence
+          path: evidence/vllm-${{ matrix.version }}.json
+          if-no-files-found: error
