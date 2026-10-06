@@ -131,10 +131,27 @@ def main() -> int:
             result["vllm_toolparser_signature"] = base
             result["bielik_parser_signature"] = bielik
 
+            imported_modules = imported_vllm_modules(parser_src)
+            protocol_compat_group = {
+                "vllm.entrypoints.openai.engine.protocol",
+                "vllm.entrypoints.generate.base.protocol",
+            }
+
             missing_modules = []
-            for mod in imported_vllm_modules(parser_src):
+            for mod in imported_modules:
+                if mod in protocol_compat_group:
+                    continue
                 if not any(candidate in names for candidate in module_candidates(mod)):
                     missing_modules.append(mod)
+
+            used_protocol_group = bool(protocol_compat_group.intersection(imported_modules))
+            protocol_group_present = any(
+                any(candidate in names for candidate in module_candidates(mod))
+                for mod in protocol_compat_group
+            )
+            if used_protocol_group and not protocol_group_present:
+                missing_modules.append("vllm.protocol.compat-group")
+
             result["missing_vllm_import_modules"] = missing_modules
 
             base_accepts_tools = (
