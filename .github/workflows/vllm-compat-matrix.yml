@@ -8,12 +8,32 @@ on:
       - "scripts/vllm_compat_probe.py"
       - ".github/workflows/vllm-compat-matrix.yml"
       - "tools/bielik_vllm_tool_parser*.py"
+      - "tests/test_bielik_tool_parser.py"
+      - "tests/test_source_contract.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  unit:
+    name: Parser unit regression suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test runner
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Run parser regression suite
+        run: python -m pytest -q tests/test_bielik_tool_parser.py tests/test_source_contract.py
+
   probe:
     name: vLLM ${{ matrix.version }} / ${{ matrix.parser }}
     runs-on: ubuntu-latest
