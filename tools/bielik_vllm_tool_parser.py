@@ -16,10 +16,18 @@ from partial_json_parser.core.options import Allow
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest,
 )
-from vllm.entrypoints.openai.engine.protocol import (
-    DeltaFunctionCall, DeltaMessage, DeltaToolCall,
-    ExtractedToolCallInformation, FunctionCall, ToolCall,
-)
+try:
+    # vLLM 0.31+ moved shared OpenAI protocol models here.
+    from vllm.entrypoints.generate.base.protocol import (
+        DeltaFunctionCall, DeltaMessage, DeltaToolCall,
+        ExtractedToolCallInformation, FunctionCall, ToolCall,
+    )
+except ImportError:
+    # vLLM 0.24-era location.
+    from vllm.entrypoints.openai.engine.protocol import (
+        DeltaFunctionCall, DeltaMessage, DeltaToolCall,
+        ExtractedToolCallInformation, FunctionCall, ToolCall,
+    )
 from vllm.logger import init_logger
 from vllm.sampling_params import StructuredOutputsParams
 from vllm.tokenizers import TokenizerLike
