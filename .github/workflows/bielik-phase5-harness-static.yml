@@ -1,0 +1,42 @@
+name: Bielik Phase 5 Harness Static
+
+on:
+  push:
+    branches:
+      - feat/osa-tool-parser-proof-suite
+    paths:
+      - "scripts/live_vllm_gpu_torture.py"
+      - "scripts/run_phase5_cuda.sh"
+      - ".github/workflows/bielik-phase5-cuda.yml"
+      - ".github/workflows/bielik-phase5-harness-static.yml"
+      - "PHASE5_REPORT.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Phase 5 harness static verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python syntax
+        run: python -m py_compile scripts/live_vllm_gpu_torture.py
+
+      - name: Shell syntax
+        run: bash -n scripts/run_phase5_cuda.sh
+
+      - name: Verify pinned vLLM CUDA image exists
+        run: docker manifest inspect vllm/vllm-openai:v0.31.0 >/dev/null
+
+      - name: Verify Phase 5 contract markers
+        run: |
+          grep -F 'VLLM_CUDA_LIVE_VERIFIED' scripts/live_vllm_gpu_torture.py
+          grep -F 'XFAIL_REPRODUCED' scripts/live_vllm_gpu_torture.py
+          grep -F -- '--tool-parser-plugin /workspace/tools/bielik_vllm_tool_parser.py' scripts/run_phase5_cuda.sh
+          grep -F -- '--chat-template /workspace/tools/bielik_advanced_chat_template.jinja' scripts/run_phase5_cuda.sh
+          grep -F 'speakleash/Bielik-1.5B-v3.0-Instruct' scripts/run_phase5_cuda.sh
