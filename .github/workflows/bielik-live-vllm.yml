@@ -46,7 +46,7 @@ jobs:
 
       - name: Start real Bielik vLLM server
         run: |
-          docker run -d --rm \
+          docker run -d \
             --name bielik-vllm \
             --shm-size=2g \
             -p 8000:8000 \
@@ -79,10 +79,12 @@ jobs:
             fi
             sleep 5
           done
+          docker inspect bielik-vllm > evidence/phase4-container-inspect.json 2>&1 || true
           docker logs bielik-vllm > evidence/phase4-vllm.log 2>&1 || true
           if [ "$ready" -ne 1 ]; then
             echo "vLLM server did not become ready"
-            tail -n 200 evidence/phase4-vllm.log || true
+            cat evidence/phase4-container-inspect.json || true
+            tail -n 300 evidence/phase4-vllm.log || true
             exit 1
           fi
 
@@ -103,4 +105,6 @@ jobs:
 
       - name: Stop server
         if: always()
-        run: docker stop bielik-vllm >/dev/null 2>&1 || true
+        run: |
+          docker stop bielik-vllm >/dev/null 2>&1 || true
+          docker rm bielik-vllm >/dev/null 2>&1 || true
