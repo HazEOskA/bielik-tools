@@ -22,7 +22,7 @@ from vllm.logger import init_logger
 from vllm.sampling_params import StructuredOutputsParams
 from vllm.tokenizers import TokenizerLike
 from vllm.tokenizers.mistral import MistralTokenizer
-from vllm.tool_parsers.abstract_tool_parser import ToolParser, ToolParserManager
+from vllm.tool_parsers.abstract_tool_parser import Tool, ToolParser, ToolParserManager
 from vllm.utils import random_uuid
 
 logger = init_logger(__name__)
@@ -30,9 +30,17 @@ logger = init_logger(__name__)
 
 @ToolParserManager.register_module("bielik")
 class BielikToolParser(ToolParser):
+    # vLLM 0.20+ routes required/named choices through the model parser only
+    # when this capability is disabled. Bielik emits tag-wrapped tool calls.
+    supports_required_and_named: bool = False
 
-    def __init__(self, tokenizer: TokenizerLike):
-        super().__init__(tokenizer)
+    def __init__(self, tokenizer: TokenizerLike, tools: list[Tool] | None = None):
+        # vLLM <= 0.18 accepts only tokenizer; vLLM >= 0.19 also passes tools.
+        # Keep one parser file compatible across the documented 0.15–0.23 range.
+        try:
+            super().__init__(tokenizer, tools)
+        except TypeError:
+            super().__init__(tokenizer)
 
         if isinstance(self.model_tokenizer, MistralTokenizer):
             logger.warning("Detected Mistral tokenizer when using a Bielik model")
