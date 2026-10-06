@@ -13,7 +13,7 @@ def test_modern_parser_contract_markers_present():
 
 def test_legacy_parser_accepts_tools_across_019_023_boundary():
     assert "supports_required_and_named: bool = False" in LEGACY
-    assert "def __init__(self, tokenizer: TokenizerLike, tools: list[Tool] | None = None)" in LEGACY
+    assert "def __init__(self, tokenizer: TokenizerLike, tools=None)" in LEGACY
     assert "super().__init__(tokenizer, tools)" in LEGACY
     assert "super().__init__(tokenizer)" in LEGACY
 
