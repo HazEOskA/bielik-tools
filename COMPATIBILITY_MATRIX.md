@@ -3,144 +3,184 @@
 Upstream: `speakleash/bielik-tools`  
 Audited upstream HEAD: `77c4f4252bdea8da24ba68ff303cb9d8fac987b4` (2026-09-20)  
 Audit date: 2026-10-06  
-Phase 2 branch: `feat/osa-tool-parser-proof-suite`
+Branch: `feat/osa-tool-parser-proof-suite`
 
-## Phase 2 source/contract matrix
+## Published-wheel compatibility matrix
 
-| vLLM tag | vLLM parser construction path | Bielik parser selected by README | Result |
+| vLLM | Bielik parser | Wheel/API verdict | Risks |
 |---|---|---|---|
-| 0.18.0 | serving calls `self.tool_parser(tokenizer)`; base `ToolParser.__init__(tokenizer)` | `bielik_vllm_tool_parser_v0.15.0.py` | **PASS — SOURCE/CONTRACT VERIFIED** |
-| 0.19.0 | serving calls `self.tool_parser(tokenizer, request.tools)`; base accepts `tools` | `bielik_vllm_tool_parser_v0.15.0.py` whose constructor accepts only `tokenizer` | **FAIL — CONSTRUCTOR MISMATCH** |
-| 0.20.0 | parser layer calls `tool_parser_cls(tokenizer, tools)`; required/named routing contract present | same legacy parser, one-arg constructor, no `supports_required_and_named=False` | **FAIL — CONSTRUCTOR + ROUTING MISMATCH** |
-| 0.23.0 | parser layer calls `tool_parser_cls(tokenizer, tools)`; required/named routing fallback present | same legacy parser, one-arg constructor | **FAIL — CONSTRUCTOR MISMATCH** |
-| 0.24.0 | parser layer calls `tool_parser_cls(tokenizer, tools)`; base accepts `tools` | `bielik_vllm_tool_parser.py` accepts `tools`, sets `supports_required_and_named=False` | **PASS — SOURCE/CONTRACT VERIFIED** |
-| 0.31.0 | parser layer calls `tool_parser_cls(tokenizer, tools)`; base accepts `tools` | current parser still imports `vllm.entrypoints.openai.engine.protocol` | **FAIL — IMPORT PATH REMOVED** |
+| 0.18.0 | `bielik_vllm_tool_parser_v0.15.0.py` | **GREEN** | none |
+| 0.19.0 | `bielik_vllm_tool_parser_v0.15.0.py` | **RED** | `CONSTRUCTOR_TOOLS_MISMATCH` |
+| 0.20.0 | `bielik_vllm_tool_parser_v0.15.0.py` | **RED** | constructor mismatch + missing required/named routing override |
+| 0.23.0 | `bielik_vllm_tool_parser_v0.15.0.py` | **RED** | constructor mismatch + missing required/named routing override |
+| 0.24.0 | `bielik_vllm_tool_parser.py` | **GREEN** | none at API/import shape level |
+| 0.31.0 | `bielik_vllm_tool_parser.py` | **RED** | removed import path `vllm.entrypoints.openai.engine.protocol` |
 
-## Finding P2-F1 — vLLM 0.19 is the real constructor break
+## Evidence source
 
-This is now stronger than the Phase 1 API-shape inference.
+GitHub Actions run:
 
-In vLLM 0.18, OpenAI chat serving constructs tool parsers as:
-
-```python
-self.tool_parser(tokenizer)
+```text
+37509330061
 ```
 
-In vLLM 0.19, the same serving path constructs them as:
+All six jobs completed and uploaded JSON evidence generated from the exact published vLLM wheels.
+
+The probe:
+
+1. downloads `vllm==<version>` as a wheel from PyPI,
+2. reads the shipped `ToolParser` implementation,
+3. compares constructor and routing contracts against the selected Bielik parser,
+4. validates Bielik's referenced vLLM module paths,
+5. emits deterministic JSON evidence.
+
+## Boundary 1 — vLLM 0.19 constructor transition
+
+### vLLM 0.18
+
+Wheel:
+
+```text
+ToolParser params = [self, tokenizer]
+```
+
+Bielik legacy parser:
+
+```text
+BielikToolParser params = [self, tokenizer]
+```
+
+Verdict:
+
+```text
+COMPATIBLE_API_SHAPE
+```
+
+### vLLM 0.19
+
+Wheel:
+
+```text
+ToolParser params = [self, tokenizer, tools]
+```
+
+Bielik legacy parser:
+
+```text
+BielikToolParser params = [self, tokenizer]
+```
+
+Verdict:
+
+```text
+RISK_DETECTED
+CONSTRUCTOR_TOOLS_MISMATCH
+```
+
+Tagged source independently confirms that vLLM 0.19 OpenAI serving invokes:
 
 ```python
 self.tool_parser(tokenizer, request.tools)
 ```
 
-The Bielik parser documented for the whole `0.15.0–0.23.x` range declares:
+This makes the mismatch concrete, not speculative.
 
-```python
-def __init__(self, tokenizer: TokenizerLike):
+## Boundary 2 — required/named routing in 0.20–0.23
+
+Published wheel results for 0.20 and 0.23:
+
+```text
+base_accepts_tools = true
+bielik_accepts_tools = false
+base_has_supports_required_and_named = true
+bielik_has_supports_required_and_named = false
 ```
 
-Therefore the documented parser is source-contract incompatible starting at **vLLM 0.19.0**.
+Detected risks:
 
-Proof level: `SOURCE/CONTRACT VERIFIED`.
-
-## Finding P2-F2 — 0.20–0.23 also require the required/named routing contract
-
-By vLLM 0.20–0.23 the parser stack contains explicit handling for:
-
-```python
-supports_required_and_named
+```text
+CONSTRUCTOR_TOOLS_MISMATCH
+REQUIRED_NAMED_ROUTING_FLAG_MISSING
 ```
 
-and the parser wrapper constructs the tool parser with:
-
-```python
-tool_parser_cls(tokenizer, tools)
-```
-
-The modern Bielik parser sets:
+The modern Bielik parser correctly uses:
 
 ```python
 supports_required_and_named = False
 ```
 
-but the legacy parser selected for 0.20–0.23 does not. Fixing only the constructor would therefore not fully align the legacy parser with the newer vLLM routing model.
+The legacy parser selected by the README for 0.20–0.23 does not.
 
-Proof level: `SOURCE/CONTRACT VERIFIED`; live inference behavior still requires execution.
+## Boundary 3 — 0.24 modern parser contract
 
-## Finding P2-F3 — current Bielik parser is not source-compatible with vLLM 0.31.0
+Published wheel result:
 
-The current Bielik parser imports protocol models from:
-
-```python
-from vllm.entrypoints.openai.engine.protocol import (
-    DeltaFunctionCall,
-    DeltaMessage,
-    DeltaToolCall,
-    ExtractedToolCallInformation,
-    FunctionCall,
-    ToolCall,
-)
+```text
+base_accepts_tools = true
+bielik_accepts_tools = true
+base_has_supports_required_and_named = true
+bielik_has_supports_required_and_named = true
+missing_vllm_import_modules = []
+risks = []
+verdict = COMPATIBLE_API_SHAPE
 ```
 
-In the official vLLM `v0.31.0` tag, that module path no longer exists.
+Therefore 0.24 is green at the API/import contract level.
 
-The protocol models are present under:
+## Boundary 4 — vLLM 0.31 protocol relocation
+
+The current Bielik parser imports:
+
+```python
+vllm.entrypoints.openai.engine.protocol
+```
+
+The published 0.31 wheel does not contain that module.
+
+Wheel result:
+
+```text
+missing_vllm_import_modules = [
+  "vllm.entrypoints.openai.engine.protocol"
+]
+risks = [
+  "PARSER_IMPORT_PATH_MISSING"
+]
+verdict = RISK_DETECTED
+```
+
+Official vLLM 0.31 source places the required protocol classes in:
 
 ```python
 vllm.entrypoints.generate.base.protocol
 ```
 
-This is also the import path used by vLLM's own `hermes_tool_parser.py` in `v0.31.0`.
+and its own Hermes parser imports from that location.
 
-Therefore the README rule:
+## Artifact integrity
+
+| vLLM | Artifact ID | SHA-256 |
+|---|---:|---|
+| 0.18.0 | `11432853522` | `14103bef747336daa28f11165de4bb9d79448770aecf9d9c5c4f0e9cd94f8c0f` |
+| 0.19.0 | `11431959705` | `feac59b75f17c106c4b08bd5da3b25e5813c2d31afdc9eb45a8b2154be92878e` |
+| 0.20.0 | `11434705106` | `b66e2651521a2bd302d95aba57c0db94bd3306810b608a7077a753abf9964a06` |
+| 0.23.0 | `11433595281` | `d2a8fd66822cd42c55482bda4d28598bc8012c70918786441f0a795751f1bdcb` |
+| 0.24.0 | `11435130025` | `0fe4ad2e64fca24d9d5fe982f592b4aa62b8643f8fbbe8900e1e6d8cd50b1a6d` |
+| 0.31.0 | `11434945080` | `441ae66d774530e2c886a8dcfea0216da50be8ab4376d5af202e1324e0fc37f2` |
+
+## Current compatibility verdict
+
+The current README ranges are not technically accurate across the tested matrix.
+
+A minimal compatibility design needs at least these boundaries:
 
 ```text
->= 0.24.0 -> bielik_vllm_tool_parser.py
+<= 0.18      legacy one-argument parser API
+0.19–0.23   tools-aware constructor + required/named routing alignment
+0.24–before protocol relocation   modern parser contract
+0.31+       new protocol import location
 ```
 
-is too broad for the current parser implementation.
+The exact last version before the protocol relocation has not been bisected in Phase 2 and remains `UNKNOWN`.
 
-Proof level: `SOURCE/CONTRACT VERIFIED`.
-
-## Import-path checks
-
-The imports used by the legacy/current Bielik parsers were checked at the matrix boundaries:
-
-- vLLM 0.18.0: required import modules present.
-- vLLM 0.23.0: required import modules present.
-- vLLM 0.24.0: required import modules present.
-- vLLM 0.31.0: `vllm.entrypoints.openai.engine.protocol` **missing**.
-
-## CI / real wheel probe
-
-Phase 2 added:
-
-- `scripts/vllm_compat_probe.py`
-- `.github/workflows/vllm-compat-matrix.yml`
-
-The workflow matrix targets:
-
-- 0.18.0
-- 0.19.0
-- 0.20.0
-- 0.23.0
-- 0.24.0
-- 0.31.0
-
-The probe downloads the exact published vLLM wheel and inspects the shipped API surface.
-
-### Current CI status
-
-`BLOCKED`: no GitHub Actions workflow run was created after the workflow commit on the fresh fork.
-
-Repository settings needed to determine/enable Actions are not exposed by the connected GitHub tool, so no runtime/wheel result is claimed.
-
-## Current verdict
-
-- `0.18.0`: source contract GREEN
-- `0.19.0`: source contract RED
-- `0.20.0`: source contract RED
-- `0.23.0`: source contract RED
-- `0.24.0`: source contract GREEN
-- `0.31.0`: source contract RED
-
-No parser fix has been applied in Phase 2.
+No parser code has been changed yet.
