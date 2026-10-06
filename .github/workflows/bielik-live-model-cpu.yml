@@ -1,0 +1,99 @@
+name: Bielik Phase 4 Model Live CPU
+
+on:
+  push:
+    branches:
+      - feat/osa-tool-parser-proof-suite
+    paths:
+      - "scripts/live_llamacpp_tool_tag_smoke.py"
+      - ".github/workflows/bielik-live-model-cpu.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-bielik-cpu:
+    name: llama.cpp CPU / Bielik 1.5B Q8_0
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Host capability evidence
+        run: |
+          mkdir -p evidence
+          {
+            echo "uname:"
+            uname -a
+            echo
+            echo "lscpu:"
+            lscpu
+            echo
+            echo "memory:"
+            free -h
+            echo
+            echo "disk:"
+            df -h
+          } | tee evidence/phase4-llama-host.txt
+
+      - name: Pull llama.cpp server image
+        run: docker pull ghcr.io/ggml-org/llama.cpp:server
+
+      - name: Start Bielik GGUF on CPU
+        run: |
+          docker run -d \
+            --name bielik-llama \
+            -p 8080:8080 \
+            ghcr.io/ggml-org/llama.cpp:server \
+            --hf-repo "speakleash/Bielik-1.5B-v3.0-Instruct-GGUF:Q8_0" \
+            --ctx-size 1024 \
+            --threads 4 \
+            --host 0.0.0.0 \
+            --port 8080 \
+            | tee evidence/phase4-llama-container-id.txt
+
+      - name: Wait for llama.cpp readiness
+        run: |
+          set +e
+          ready=0
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' bielik-llama 2>/dev/null)" != "true" ]; then
+              break
+            fi
+            sleep 5
+          done
+          docker inspect bielik-llama > evidence/phase4-llama-inspect.json 2>&1 || true
+          docker logs bielik-llama > evidence/phase4-llama.log 2>&1 || true
+          if [ "$ready" -ne 1 ]; then
+            echo "llama.cpp server did not become ready"
+            tail -n 300 evidence/phase4-llama.log || true
+            exit 1
+          fi
+
+      - name: Run live Bielik tool-tag smoke
+        run: python scripts/live_llamacpp_tool_tag_smoke.py
+
+      - name: Capture final server logs
+        if: always()
+        run: docker logs bielik-llama > evidence/phase4-llama.log 2>&1 || true
+
+      - name: Upload model live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bielik-phase4-model-live-evidence
+          path: evidence/
+          if-no-files-found: error
+
+      - name: Stop server
+        if: always()
+        run: |
+          docker stop bielik-llama >/dev/null 2>&1 || true
+          docker rm bielik-llama >/dev/null 2>&1 || true
