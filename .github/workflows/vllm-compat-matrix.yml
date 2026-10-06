@@ -53,6 +53,7 @@ jobs:
             --output "evidence/vllm-${safe_version}.json"
 
       - name: Publish step summary
+        if: always()
         run: |
           {
             echo "## vLLM ${{ matrix.version }}"
@@ -63,8 +64,29 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload compatibility evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vllm-${{ matrix.version }}-compat-evidence
           path: evidence/vllm-${{ matrix.version }}.json
           if-no-files-found: error
+
+      - name: Assert compatibility verdict
+        env:
+          VLLM_VERSION: "${{ matrix.version }}"
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          version = os.environ["VLLM_VERSION"]
+          path = f"evidence/vllm-{version}.json"
+          with open(path, encoding="utf-8") as fh:
+              result = json.load(fh)
+
+          verdict = result.get("verdict")
+          risks = result.get("risks", [])
+          print(f"vLLM {version}: verdict={verdict}, risks={risks}")
+          if verdict != "COMPATIBLE_API_SHAPE":
+              raise SystemExit(1)
+          PY
